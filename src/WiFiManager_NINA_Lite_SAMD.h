@@ -2,8 +2,8 @@
    WiFiManager_NINA_Lite_SAMD.h
    For SAMD boards using WiFiNINA modules/shields, using much less code to support boards with smaller memory
 
-   WiFiManager_NINA_WM_Lite is a library for the Mega, Teensy, SAM DUE, SAMD and STM32 boards 
-   (https://github.com/khoih-prog/WiFiManager_NINA_Lite) to enable store Credentials in EEPROM/LittleFS for easy 
+   WiFiManager_NINA_WM_Lite is a library for the Mega, Teensy, SAM DUE, SAMD and STM32 boards
+   (https://github.com/khoih-prog/WiFiManager_NINA_Lite) to enable store Credentials in EEPROM/LittleFS for easy
    configuration/reconfiguration and autoconnect/autoreconnect of WiFi and other services without Hardcoding.
 
    Built by Khoi Hoang https://github.com/khoih-prog/WiFiManager_NINA_Lite
@@ -18,7 +18,7 @@
    1.0.3   K Hoang      24/04/2020  Fix bug. Add nRF5 (Adafruit, NINA_B302_ublox, etc.) support. Add MultiWiFi, HostName capability.
                                     SSID password maxlen is 63 now. Permit special chars # and % in input data.
    1.0.4   K Hoang      04/05/2020  Add Configurable Config Portal Title, Default Config Data and DRD. Update examples.
-   1.0.5   K Hoang      11/07/2020  Modify LOAD_DEFAULT_CONFIG_DATA logic. Enhance MultiWiFi connection logic. Add MQTT examples.   
+   1.0.5   K Hoang      11/07/2020  Modify LOAD_DEFAULT_CONFIG_DATA logic. Enhance MultiWiFi connection logic. Add MQTT examples.
   *****************************************************************************************************************************/
 
 #ifndef WiFiManager_NINA_Lite_SAMD_h
@@ -92,22 +92,33 @@ extern MenuItem myMenuItems [];
 //From v1.0.3, WPA2 passwords can be up to 63 characters long.
 #define PASS_MAX_LEN      64
 
+#define USER_MAX_LEN      64
+
+typedef struct
+{
+  char wifi_ssid[SSID_MAX_LEN];
+  char wifi_user[USER_MAX_LEN];
+  char wifi_pw  [PASS_MAX_LEN];
+}  Enterprise_WiFi_Credentials;
+
 typedef struct
 {
   char wifi_ssid[SSID_MAX_LEN];
   char wifi_pw  [PASS_MAX_LEN];
 }  WiFi_Credentials;
 
-#define NUM_WIFI_CREDENTIALS      2
+#define NUM_WIFI_CREDENTIALS      1
+#define NUM_ENTERPRISE_CREDENTIALS 1
 
 // Configurable items besides fixed Header
-#define NUM_CONFIGURABLE_ITEMS    ( ( 2 * NUM_WIFI_CREDENTIALS ) + 1 )
+#define NUM_CONFIGURABLE_ITEMS    ( ( 2 * NUM_WIFI_CREDENTIALS ) + (3 * NUM_ENTERPRISE_CREDENTIALS) + 1 )
 ////////////////
 
 typedef struct Configuration
 {
   char header         [16];
   WiFi_Credentials  WiFi_Creds  [NUM_WIFI_CREDENTIALS];
+  Enterprise_WiFi_Credentials ent_Creds [NUM_ENTERPRISE_CREDENTIALS];
   char board_name     [24];
   int  checkSum;
 } WiFiNINA_Configuration;
@@ -159,14 +170,14 @@ String IPAddressToString(IPAddress _address)
 class WiFiManager_NINA_Lite
 {
     public:
-    
+
     WiFiManager_NINA_Lite()
-    {     
+    {
       // check for the presence of the shield
-      if (WiFi.status() == WL_NO_MODULE) 
+      if (WiFi.status() == WL_NO_MODULE)
       {
         DEBUG_WM1(F("NoNINA"));
-      }     
+      }
     }
 
     ~WiFiManager_NINA_Lite()
@@ -174,16 +185,16 @@ class WiFiManager_NINA_Lite
       if (server)
         delete server;
     }
-        
+
     bool connectWiFi(const char* ssid, const char* pass)
     {
       DEBUG_WM2(F("Con2:"), ssid);
-      
+
       // New in v1.0.3
       setHostname();
       ///
 
-      if ( WiFi.begin(ssid, pass) == WL_CONNECTED )  
+      if ( WiFi.begin(ssid, pass) == WL_CONNECTED )
       {
         displayWiFiData();
       }
@@ -193,13 +204,31 @@ class WiFiManager_NINA_Lite
         return false;
       }
 
+      bool connectWiFi(const char* ssid, const char* user, const char* pass)
+      {
+        DEBUG_WM2(F("Con2:"), ssid);
+
+        // New in v1.0.3
+        setHostname();
+        ///
+
+        if ( WiFi.beginEnterprise(ssid, user, pass) == WL_CONNECTED )
+        {
+          displayWiFiData();
+        }
+        else
+        {
+          DEBUG_WM1(F("NoW"));
+          return false;
+        }
+
       DEBUG_WM1(F("WOK"));
 
       wifi_connected = true;
 
       return true;
     }
-   
+
     void begin(const char* ssid,
                const char* pass )
     {
@@ -207,17 +236,25 @@ class WiFiManager_NINA_Lite
       connectWiFi(ssid, pass);
     }
 
+    void begin(const char* ssid,
+               const char* user,
+               const char* pass )
+    {
+      DEBUG_WM1(F("conW"));
+      connectWiFi(ssid, user, pass);
+    }
+
     // New in v1.0.5
     void begin(const char *iHostname = "")
     {
       #define RETRY_TIMES_CONNECT_WIFI			3
-      
+
       // New in v1.0.3
       if (iHostname[0] == 0)
       {
         String randomNum = String(random(0xFFFFFF), HEX);
         randomNum.toUpperCase();
-        
+
         String _hostname = "SAMD-WiFiNINA-" + randomNum;
         _hostname.toUpperCase();
 
@@ -228,30 +265,30 @@ class WiFiManager_NINA_Lite
         // Prepare and store the hostname only not NULL
         getRFC952_hostname(iHostname);
       }
-      
+
       DEBUG_WM2(F("Hostname="), RFC952_hostname);
       //////
-      
+
       //// New DRD ////
-      drd = new DoubleResetDetector_Generic(DRD_TIMEOUT, DRD_ADDRESS);  
+      drd = new DoubleResetDetector_Generic(DRD_TIMEOUT, DRD_ADDRESS);
       bool useConfigPortal = false;
-   
+
       if (drd->detectDoubleReset())
       {
         DEBUG_WM1(F("Double Reset Detected"));
-     
+
         useConfigPortal = true;
       }
       //// New DRD ////
       DEBUG_WM1(F("======= Start Default Config Data ======="));
       displayConfigData(defaultConfig);
-      
+
       hadConfigData = getConfigData();
-        
+
       //// New DRD ////
       //  useConfigPortal when getConfigData() not OK or DRD'ed
-      if (hadConfigData && !useConfigPortal) 
-      //// New DRD //// 
+      if (hadConfigData && !useConfigPortal)
+      //// New DRD ////
       {
         //hadConfigData = true;
 
@@ -269,7 +306,7 @@ class WiFiManager_NINA_Lite
       else
       {
         INFO_WM2(F("b:StayInCfgPortal:"), useConfigPortal ? F("DRD") : F("NoCfgDat"));
-        
+
         // failed to connect to WiFi, will start configuration mode
         hadConfigData = false;
         startConfigurationMode();
@@ -314,13 +351,13 @@ class WiFiManager_NINA_Lite
     {
       static int retryTimes = 0;
       static bool wifiDisconnectedOnce = false;
-      
+
       // Lost connection in running. Give chance to reconfig.
       // Check WiFi status every 5s and update status
       // Check twice to be sure wifi disconnected is real
       static unsigned long checkstatus_timeout = 0;
       #define WIFI_STATUS_CHECK_INTERVAL    5000L
-      
+
       //// New DRD ////
       // Call the double reset detector loop method every so often,
       // so that it can recognise when the timeout expires.
@@ -328,9 +365,9 @@ class WiFiManager_NINA_Lite
       // consider the next reset as a double reset.
       drd->loop();
       //// New DRD ////
-         
+
       if ( !configuration_mode && (millis() > checkstatus_timeout) )
-      {       
+      {
         if (WiFi.status() == WL_CONNECTED)
         {
           wifi_connected = true;
@@ -348,9 +385,9 @@ class WiFiManager_NINA_Lite
             wifiDisconnectedOnce = true;
           }
         }
-        
+
         checkstatus_timeout = millis() + WIFI_STATUS_CHECK_INTERVAL;
-      }    
+      }
 
       // Lost connection in running. Give chance to reconfig.
       if ( !wifi_connected )
@@ -366,7 +403,7 @@ class WiFiManager_NINA_Lite
             //DEBUG_WM1(F("r:handleClient"));
             server->handleClient();
           }
-           
+
           return;
         }
         else
@@ -391,7 +428,7 @@ class WiFiManager_NINA_Lite
           if ( !wifi_connected )
           {
             DEBUG_WM1(F("r:WLost.ReconW"));
-            
+
             if (connectMultiWiFi(RETRY_TIMES_RECONNECT_WIFI))
             {
               DEBUG_WM1(F("r:WOK"));
@@ -405,7 +442,7 @@ class WiFiManager_NINA_Lite
         DEBUG_WM1(F("r:gotWBack"));
       }
     }
-    
+
     void setHostname(void)
     {
       if (RFC952_hostname[0] != 0)
@@ -434,7 +471,7 @@ class WiFiManager_NINA_Lite
 
       return AP_channel;
     }
-    
+
     void setConfigPortal(String ssid = "", String pass = "")
     {
       portal_ssid = ssid;
@@ -447,10 +484,10 @@ class WiFiManager_NINA_Lite
     }
 
     String getWiFiSSID(uint8_t index)
-    { 
+    {
       if (index >= NUM_WIFI_CREDENTIALS)
         return String("");
-        
+
       if (!hadConfigData)
         getConfigData();
 
@@ -461,18 +498,18 @@ class WiFiManager_NINA_Lite
     {
       if (index >= NUM_WIFI_CREDENTIALS)
         return String("");
-        
+
       if (!hadConfigData)
         getConfigData();
 
       return (String(WiFiNINA_config.WiFi_Creds[index].wifi_pw));
     }
-    
+
     bool getWiFiStatus(void)
     {
       return wifi_connected;
     }
-    
+
     WiFiNINA_Configuration* getFullConfigData(WiFiNINA_Configuration *configData)
     {
       if (!hadConfigData)
@@ -495,7 +532,7 @@ class WiFiManager_NINA_Lite
     void clearConfigData()
     {
       memset(&WiFiNINA_config, 0, sizeof(WiFiNINA_config));
-      
+
       for (int i = 0; i < NUM_MENU_ITEMS; i++)
       {
         // Actual size of pdata is [maxlen + 1]
@@ -504,54 +541,54 @@ class WiFiManager_NINA_Lite
 
       saveConfigData();
     }
-    
+
     bool isConfigDataValid(void)
     {
       return hadConfigData;
     }
 
     void resetFunc()
-    {    
+    {
       // Best one. Possibly don't need the WDT
       NVIC_SystemReset();
-      
+
 #if ( defined(__SAMD51__) || defined(__SAMD51J20A__) || defined(__SAMD51J19A__) || defined(__SAMD51G19A__)  )
       // For SAMD51
       // see Table 17-5 Timeout Period (valid values 0-11)
-      WDT->CONFIG.reg = 5; 
+      WDT->CONFIG.reg = 5;
       WDT->CTRLA.reg = WDT_CTRLA_ENABLE;
       // To check if OK or bit.ENABLE/CLEAR
       while (WDT->SYNCBUSY.bit.WEN == 1);
-      
+
       // use the WDT watchdog timer to force a system reset.
       WDT->CLEAR.reg= 0x00;
       // To check if OK or bit.ENABLE/CLEAR
       while (WDT->SYNCBUSY.bit.WEN == 1);
-#else   
+#else
       // For SAMD21, etc
       // see Table 17-5 Timeout Period (valid values 0-11)
-      WDT->CONFIG.reg = 5; 
+      WDT->CONFIG.reg = 5;
       WDT->CTRL.reg = WDT_CTRL_ENABLE;
       while (WDT->STATUS.bit.SYNCBUSY == 1);
-      
+
       // use the WDT watchdog timer to force a system reset.
       WDT->CLEAR.reg= 0x00;
       while (WDT->STATUS.bit.SYNCBUSY == 1);
-#endif      
+#endif
     }
 
   private:
     String ipAddress = "0.0.0.0";
 
     WiFiWebServer* server = NULL;
-    
+
     bool configuration_mode = false;
 
     unsigned long configTimeout;
     bool hadConfigData = false;
 
     WiFiNINA_Configuration WiFiNINA_config;
-    
+
     uint16_t totalDataSize = 0;
 
     String macAddress = "";
@@ -590,18 +627,18 @@ class WiFiManager_NINA_Lite
 
       return RFC952_hostname;
     }
-    
+
     void displayConfigData(WiFiNINA_Configuration configData)
     {
       DEBUG_WM6(F("Hdr="),   configData.header, F(",SSID="), configData.WiFi_Creds[0].wifi_ssid,
                 F(",PW="),   configData.WiFi_Creds[0].wifi_pw);
-      DEBUG_WM4(F("SSID1="), configData.WiFi_Creds[1].wifi_ssid, F(",PW1="),  configData.WiFi_Creds[1].wifi_pw);     
-      DEBUG_WM2(F("BName="), configData.board_name);     
-                 
+      DEBUG_WM4(F("SSID1="), configData.WiFi_Creds[1].wifi_ssid, F(",PW1="),  configData.WiFi_Creds[1].wifi_pw);
+      DEBUG_WM2(F("BName="), configData.board_name);
+
       for (int i = 0; i < NUM_MENU_ITEMS; i++)
       {
         DEBUG_WM6("i=", i, ",id=", myMenuItems[i].id, ",data=", myMenuItems[i].pdata);
-      }           
+      }
     }
 
     void displayWiFiData(void)
@@ -640,188 +677,188 @@ class WiFiManager_NINA_Lite
 
       return checkSum;
     }
-    
+
     bool checkDynamicData(void)
     {
-      // It's too bad that emulate EEPROM.read()/write() can only deal with bytes. 
+      // It's too bad that emulate EEPROM.read()/write() can only deal with bytes.
       // Have to read/write each byte. To rewrite the library
-      
+
       int checkSum = 0;
       int readCheckSum;
-      
+
       uint16_t offset = NINA_EEPROM_START + sizeof(WiFiNINA_config);
-                
+
       // Find the longest pdata, then dynamically allocate buffer. Remember to free when done
       // This is used to store tempo data to calculate checksum to see of data is valid
       // We dont like to destroy myMenuItems[i].pdata with invalid data
-          
+
       for (int i = 0; i < NUM_MENU_ITEMS; i++)
-      {                             
+      {
         for (uint16_t j = 0; j < myMenuItems[i].maxlen; j++, offset++)
-        {       
-          checkSum += EEPROM.read(offset);    
-         }       
+        {
+          checkSum += EEPROM.read(offset);
+         }
       }
-      
+
       uint8_t* _pointer = (uint8_t *) &readCheckSum;
-      
+
       for (int i = 0; i < sizeof(readCheckSum); i++, _pointer++, offset++)
-      {                  
+      {
         *_pointer = EEPROM.read(offset);
-      }  
-                  
+      }
+
       DEBUG_WM4(F("ChkCrR:CrCCsum=0x"), String(checkSum, HEX), F(",CrRCsum=0x"), String(readCheckSum, HEX));
-           
+
       if ( checkSum != readCheckSum)
       {
         return false;
       }
-      
-      return true;    
+
+      return true;
     }
-    
+
     bool EEPROM_get()
     {
-      // It's too bad that emulate EEPROM.read()/write() can only deal with bytes. 
+      // It's too bad that emulate EEPROM.read()/write() can only deal with bytes.
       // Have to read/write each byte. To rewrite the library
-      
+
       uint16_t offset = NINA_EEPROM_START;
-                
+
       uint8_t* _pointer = (uint8_t *) &WiFiNINA_config;
-      
+
       for (int i = 0; i < sizeof(WiFiNINA_config); i++, _pointer++, offset++)
-      {              
+      {
         *_pointer = EEPROM.read(offset);
       }
-           
+
       int checkSum = 0;
       int readCheckSum;
-      
+
       totalDataSize = sizeof(WiFiNINA_config) + sizeof(readCheckSum);
-   
+
       for (int i = 0; i < NUM_MENU_ITEMS; i++)
-      {       
+      {
         _pointer = (uint8_t *) myMenuItems[i].pdata;
         totalDataSize += myMenuItems[i].maxlen;
-        
+
         // Actual size of pdata is [maxlen + 1]
         memset(myMenuItems[i].pdata, 0, myMenuItems[i].maxlen + 1);
-               
+
         for (uint16_t j = 0; j < myMenuItems[i].maxlen; j++, _pointer++, offset++)
         {
-          *_pointer = EEPROM.read(offset);          
-          checkSum += *_pointer;  
-         }       
+          *_pointer = EEPROM.read(offset);
+          checkSum += *_pointer;
+         }
       }
-      
+
       _pointer = (uint8_t *) &readCheckSum;
-      
+
       for (int i = 0; i < sizeof(readCheckSum); i++, _pointer++, offset++)
-      {                  
+      {
         *_pointer = EEPROM.read(offset);
       }
-         
+
       DEBUG_WM4(F("CrCCsum=0x"), String(checkSum, HEX), F(",CrRCsum=0x"), String(readCheckSum, HEX));
-      
+
       if ( checkSum != readCheckSum)
       {
         return false;
       }
-      
+
       return true;
-    }    
-    
+    }
+
     void EEPROM_put()
     {
-      // It's too bad that emulate EEPROM.read()/writ() can only deal with bytes. 
+      // It's too bad that emulate EEPROM.read()/writ() can only deal with bytes.
       // Have to read/write each byte. To rewrite the library
-      
+
       uint16_t offset = NINA_EEPROM_START;
-           
+
       uint8_t* _pointer = (uint8_t *) &WiFiNINA_config;
-      
+
       for (int i = 0; i < sizeof(WiFiNINA_config); i++, _pointer++, offset++)
-      {              
+      {
         EEPROM.write(offset, *_pointer);
       }
-           
+
       int checkSum = 0;
-    
+
       for (int i = 0; i < NUM_MENU_ITEMS; i++)
-      {       
+      {
         _pointer = (uint8_t *) myMenuItems[i].pdata;
-        
+
         //DEBUG_WM4(F("pdata="), myMenuItems[i].pdata, F(",len="), myMenuItems[i].maxlen);
-                     
+
         for (uint16_t j = 0; j < myMenuItems[i].maxlen; j++,_pointer++,offset++)
         {
           EEPROM.write(offset, *_pointer);
-          
-          checkSum += *_pointer;     
+
+          checkSum += *_pointer;
          }
       }
-      
+
       _pointer = (uint8_t *) &checkSum;
-      
+
       for (int i = 0; i < sizeof(checkSum); i++, _pointer++, offset++)
-      {              
+      {
         EEPROM.write(offset, *_pointer);
       }
-      
+
       EEPROM.commit();
-      
+
       DEBUG_WM2(F("CrCCSum=0x"), String(checkSum, HEX));
     }
-    
+
     // New from v1.0.5
     void loadAndSaveDefaultConfigData(void)
     {
       // Load Default Config Data from Sketch
       memcpy(&WiFiNINA_config, &defaultConfig, sizeof(WiFiNINA_config));
       strcpy(WiFiNINA_config.header, WIFININA_BOARD_TYPE);
-      
+
       // Including config and dynamic data, and assume valid
       saveConfigData();
-          
+
       DEBUG_WM1(F("======= Start Loaded Config Data ======="));
-      displayConfigData(WiFiNINA_config);    
+      displayConfigData(WiFiNINA_config);
     }
-    
+
     bool getConfigData()
     {
       bool dynamicDataValid;
       int calChecksum;
-      
-      hadConfigData = false;  
-      
+
+      hadConfigData = false;
+
       // Use new LOAD_DEFAULT_CONFIG_DATA logic
       if (LOAD_DEFAULT_CONFIG_DATA)
-      {     
+      {
         // Load Config Data from Sketch
         loadAndSaveDefaultConfigData();
-        
+
         // Don't need Config Portal anymore
-        return true; 
+        return true;
       }
       else
-      {   
+      {
         // Load stored config / dynamic data from dueFlashStorage
         // Verify ChkSum
         dynamicDataValid = checkDynamicData();
-        
+
         calChecksum = calcChecksum();
 
         DEBUG_WM4(F("CCSum=0x"), String(calChecksum, HEX), F(",RCSum=0x"), String(WiFiNINA_config.checkSum, HEX));
-                   
+
         if (dynamicDataValid)
         {
           // CkSum verified, Now get valid config/ dynamic data
           EEPROM_get();
-             
-          DEBUG_WM1(F("Valid Stored Dynamic Data"));        
+
+          DEBUG_WM1(F("Valid Stored Dynamic Data"));
           DEBUG_WM1(F("======= Start Stored Config Data ======="));
           displayConfigData(WiFiNINA_config);
-          
+
           // Don't need Config Portal anymore
           return true;
         }
@@ -829,14 +866,14 @@ class WiFiManager_NINA_Lite
         {
           // Invalid Stored config data => Config Portal
           DEBUG_WM1(F("Invalid Stored Dynamic Data. Load default from Sketch"));
-          
+
           // Load Default Config Data from Sketch, better than just "blank"
           loadAndSaveDefaultConfigData();
-                           
+
           // Need Config Portal here as data can be just dummy
-          // Even if you don't open CP, you're OK on next boot if your default config data is valid 
+          // Even if you don't open CP, you're OK on next boot if your default config data is valid
           return false;
-        }      
+        }
       }
 
       if ( (strncmp(WiFiNINA_config.header, WIFININA_BOARD_TYPE, strlen(WIFININA_BOARD_TYPE)) != 0) ||
@@ -845,7 +882,7 @@ class WiFiManager_NINA_Lite
         // Including Credentials CSum
         DEBUG_WM2(F("InitCfgFile,sz="), sizeof(WiFiNINA_config));
 
-        // doesn't have any configuration        
+        // doesn't have any configuration
         if (LOAD_DEFAULT_CONFIG_DATA)
         {
           memcpy(&WiFiNINA_config, &defaultConfig, sizeof(WiFiNINA_config));
@@ -859,38 +896,38 @@ class WiFiManager_NINA_Lite
             // Actual size of pdata is [maxlen + 1]
             memset(myMenuItems[i].pdata, 0, myMenuItems[i].maxlen + 1);
           }
-              
+
           strcpy(WiFiNINA_config.WiFi_Creds[0].wifi_ssid,   WM_NO_CONFIG);
           strcpy(WiFiNINA_config.WiFi_Creds[0].wifi_pw,     WM_NO_CONFIG);
           strcpy(WiFiNINA_config.WiFi_Creds[1].wifi_ssid,   WM_NO_CONFIG);
           strcpy(WiFiNINA_config.WiFi_Creds[1].wifi_pw,     WM_NO_CONFIG);
           strcpy(WiFiNINA_config.board_name, WM_NO_CONFIG);
-          
+
           for (int i = 0; i < NUM_MENU_ITEMS; i++)
           {
             strncpy(myMenuItems[i].pdata, WM_NO_CONFIG, myMenuItems[i].maxlen);
           }
         }
-    
+
         strcpy(WiFiNINA_config.header, WIFININA_BOARD_TYPE);
-        
+
         for (int i = 0; i < NUM_MENU_ITEMS; i++)
         {
           DEBUG_WM4(F("g:myMenuItems["), i, F("]="), myMenuItems[i].pdata );
         }
-        
+
         // Don't need
         WiFiNINA_config.checkSum = 0;
 
         saveConfigData();
-        
-        return false;   
+
+        return false;
       }
       else if ( !strncmp(WiFiNINA_config.WiFi_Creds[0].wifi_ssid,       WM_NO_CONFIG, strlen(WM_NO_CONFIG) )  ||
                 !strncmp(WiFiNINA_config.WiFi_Creds[0].wifi_pw,         WM_NO_CONFIG, strlen(WM_NO_CONFIG) )  ||
                 !strncmp(WiFiNINA_config.WiFi_Creds[1].wifi_ssid,       WM_NO_CONFIG, strlen(WM_NO_CONFIG) )  ||
                 !strncmp(WiFiNINA_config.WiFi_Creds[1].wifi_pw,         WM_NO_CONFIG, strlen(WM_NO_CONFIG) )  ||
-                !strlen(WiFiNINA_config.WiFi_Creds[0].wifi_ssid) || 
+                !strlen(WiFiNINA_config.WiFi_Creds[0].wifi_ssid) ||
                 !strlen(WiFiNINA_config.WiFi_Creds[1].wifi_ssid) ||
                 !strlen(WiFiNINA_config.WiFi_Creds[0].wifi_pw)   ||
                 !strlen(WiFiNINA_config.WiFi_Creds[1].wifi_pw)  )
@@ -910,19 +947,19 @@ class WiFiManager_NINA_Lite
     {
       int calChecksum = calcChecksum();
       WiFiNINA_config.checkSum = calChecksum;
-      
+
       DEBUG_WM6(F("SaveEEPROM,sz="), EEPROM.length(), F(",Datasz="), totalDataSize, F(",CSum=0x"), String(calChecksum, HEX));
 
       EEPROM_put();
     }
-    
+
     // New connection logic from v1.0.5
     bool connectMultiWiFi(int retry_time)
     {
       int sleep_time  = 250;
       int index       = 0;
       uint8_t status;
-                       
+
       static int lastConnectedIndex = 255;
 
       DEBUG_WM1(F("ConMultiWifi"));
@@ -932,42 +969,59 @@ class WiFiManager_NINA_Lite
         DEBUG_WM1(F("UseStatIP"));
         WiFi.config(static_IP);
       }
-    
+
       if (lastConnectedIndex != 255)
       {
-        index = (lastConnectedIndex + 1) % NUM_WIFI_CREDENTIALS;                       
+        index = (lastConnectedIndex + 1) % NUM_WIFI_CREDENTIALS + NUM_ENTERPRISE_CREDENTIALS;
         DEBUG_WM4(F("Using index="), index, F(", lastConnectedIndex="), lastConnectedIndex);
       }
-      
-      DEBUG_WM4(F("con2WF:SSID="), WiFiNINA_config.WiFi_Creds[index].wifi_ssid,
-                F(",PW="), WiFiNINA_config.WiFi_Creds[index].wifi_pw);
-             
+
+      if (index > NUM_WIFI_CREDENTIALS)
+      {
+        DEBUG_WM4(F("con2WF:SSID="), WiFiNINA_config.WiFi_Creds[index].wifi_ssid,
+                  F(",PW="), WiFiNINA_config.WiFi_Creds[index].wifi_user);
+      }
+      else
+      {
+        DEBUG_WM4(F("con2WF:SSID="), WiFiNINA_config.WiFi_Creds[index].wifi_ssid,
+                  F(",PW="), WiFiNINA_config.WiFi_Creds[index].wifi_pw);
+      }
+
+
       while ( !wifi_connected && ( 0 < retry_time ) )
-      {      
+      {
         DEBUG_WM2(F("Remaining retry_time="), retry_time);
-        
-        status = WiFi.begin(WiFiNINA_config.WiFi_Creds[index].wifi_ssid, WiFiNINA_config.WiFi_Creds[index].wifi_pw); 
-            
-        // Need restart WiFi at beginning of each cycle 
+
+        if (index > NUM_WIFI_CREDENTIALS)
+        {
+          status = WiFi.beginEnterprise(WiFiNINA_config.WiFi_Creds[index].wifi_ssid, WiFiNINA_config.WiFi_Creds[index].wifi_user, WiFiNINA_config.WiFi_Creds[index].wifi_pw);
+        }
+        else
+        {
+          status = WiFi.begin(WiFiNINA_config.WiFi_Creds[index].wifi_ssid, WiFiNINA_config.WiFi_Creds[index].wifi_pw);
+        }
+
+
+        // Need restart WiFi at beginning of each cycle
         if (status == WL_CONNECTED)
         {
-          wifi_connected = true;          
-          lastConnectedIndex = index;                                     
+          wifi_connected = true;
+          lastConnectedIndex = index;
           DEBUG_WM2(F("WOK, lastConnectedIndex="), lastConnectedIndex);
-          
+
           break;
         }
         else
         {
           delay(sleep_time);
           retry_time--;
-        }         
+        }
       }
-          
+
       if (retry_time <= 0)
-      {      
-        DEBUG_WM4(F("Failed using index="), index, F(", retry_time="), retry_time);             
-      }  
+      {
+        DEBUG_WM4(F("Failed using index="), index, F(", retry_time="), retry_time);
+      }
 
       if (wifi_connected)
       {
@@ -976,21 +1030,21 @@ class WiFiManager_NINA_Lite
       }
       else
       {
-        DEBUG_WM1(F("con2WF:failed"));  
+        DEBUG_WM1(F("con2WF:failed"));
         // Can't connect, so try another index next time. Faking this index is OK and lost
-        lastConnectedIndex = index;  
+        lastConnectedIndex = index;
       }
 
-      return wifi_connected;  
+      return wifi_connected;
     }
 
     // NEW
     void createHTML(String& root_html_template)
     {
       String pitem;
-      
+
       root_html_template = String(WIFININA_HTML_HEAD)  + WIFININA_FLDSET_START;
-      
+
       for (int i = 0; i < NUM_MENU_ITEMS; i++)
       {
         pitem = String(WIFININA_HTML_PARAM);
@@ -998,24 +1052,24 @@ class WiFiManager_NINA_Lite
         pitem.replace("{b}", myMenuItems[i].displayName);
         pitem.replace("{v}", myMenuItems[i].id);
         pitem.replace("{i}", myMenuItems[i].id);
-        
+
         root_html_template += pitem;
       }
-      
-      root_html_template += String(WIFININA_FLDSET_END) + WIFININA_HTML_BUTTON + WIFININA_HTML_SCRIPT;     
-      
+
+      root_html_template += String(WIFININA_FLDSET_END) + WIFININA_HTML_BUTTON + WIFININA_HTML_SCRIPT;
+
       for (int i = 0; i < NUM_MENU_ITEMS; i++)
       {
         pitem = String(WIFININA_HTML_SCRIPT_ITEM);
-        
+
         pitem.replace("{d}", myMenuItems[i].id);
-        
+
         root_html_template += pitem;
       }
-      
+
       root_html_template += String(WIFININA_HTML_SCRIPT_END) + WIFININA_HTML_END;
-      
-      return;     
+
+      return;
     }
 
     void handleRequest()
@@ -1051,7 +1105,7 @@ class WiFiManager_NINA_Lite
           result.replace("[[id1]]",    WiFiNINA_config.WiFi_Creds[1].wifi_ssid);
           result.replace("[[pw1]]",    WiFiNINA_config.WiFi_Creds[1].wifi_pw);
           result.replace("[[nm]]",     WiFiNINA_config.board_name);
-          
+
           for (int i = 0; i < NUM_MENU_ITEMS; i++)
           {
             String toChange = String("[[") + myMenuItems[i].id + "]]";
@@ -1109,7 +1163,7 @@ class WiFiManager_NINA_Lite
           else
             strncpy(WiFiNINA_config.board_name, value.c_str(), sizeof(WiFiNINA_config.board_name) - 1);
         }
-        
+
         for (int i = 0; i < NUM_MENU_ITEMS; i++)
         {
           if (key == myMenuItems[i].id)
@@ -1160,15 +1214,15 @@ class WiFiManager_NINA_Lite
         portal_ssid = "WIFININA_" + randomNum;
         portal_pass = "MyWIFININA_" + randomNum;
       }
-      
+
       // start access point, AP only, channel 10
-           
+
       uint16_t channel;
-     
+
       // Use random channel if  AP_channel == 0
-      //srand(MAX_WIFI_CHANNEL);   
+      //srand(MAX_WIFI_CHANNEL);
       srand((uint16_t) millis());
-      
+
       if (AP_channel == 0)
         channel = (rand() % MAX_WIFI_CHANNEL) + 1;     //random(MAX_WIFI_CHANNEL) + 1;
       else
@@ -1179,7 +1233,7 @@ class WiFiManager_NINA_Lite
 
       // start access point, AP only,default channel 10
       WiFi.beginAP(portal_ssid.c_str(), portal_pass.c_str(), channel);
-      
+
 
       if (!server)
       {
